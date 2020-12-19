@@ -59,7 +59,6 @@ playerAllowedToPlayCard (GameState player order mid Play _ _) (Card _ colorLaid)
                                                                                               not (hasColorOnHand colorLaid hand)
                                                                                     where firstColor = serveColor mid
                                                                                           hand =handCards $ player !! head order
-playerAllowedToPlayCard _ _ = False
 
 hasColorOnHand :: Color -> [Card] -> Bool
 hasColorOnHand colorTest hand = elem colorTest $ color <$> hand
@@ -137,15 +136,20 @@ playerToIndex :: Player -> [Player] -> Int
 playerToIndex p ps = i
   where (Just i) = elemIndex p ps
 
+toPlayerList :: [Int] -> [Player] -> [Player]
+toPlayerList [] _ = []
+toPlayerList (i:is) player = (player!!i) : toPlayerList is player 
+
 newTrickRound :: GameState -> GameState
 newTrickRound gs@GameState{..} = gs{player = replace player playerWonTrick updatedWonPlayer,
                                     mid = [],
                                     startedRound = updatedWonPlayer,
-                                    playerOrder = cycleTo (playerToIndex ) playerOrder }
-                                where playerWonTrick = whosePlayersTrick mid (cycleTo startedRound player) trump
+                                    playerOrder = cycleTo (playerToIndex playerWonTrick player) playerOrder }
+                                where playerWonTrick = whosePlayersTrick mid (toPlayerList playerOrder player) trump
                                       updatedWonPlayer = addTrick playerWonTrick
 
 cycleTo :: Int -> [Int] -> [Int]
+cycleTo _ [] = [] 
 cycleTo p (p1:px) = if p == p1
                     then p1:px
                     else cycleTo p px
