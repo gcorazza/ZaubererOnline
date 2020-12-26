@@ -4,6 +4,7 @@ module Wizard  where
 
 import Data.Maybe
 import Data.List
+import System.Random
 
 data Color = Red | Yellow | Blue | Green deriving (Eq, Show)
 
@@ -36,12 +37,29 @@ data GameState = GameState
     trump :: Maybe Color
   }
 
+newtype Trump = Trump (Maybe Color) deriving (Show)
+newtype ServeColor = ServeColor (Maybe Color) deriving (Show)
+
 initGame :: [String] -> GameState
 initGame names = GameState player (cycle [0 .. length player]) [] Guess (head player) Nothing
   where player = initPlayer <$> names
 
 initPlayer :: String -> Player
 initPlayer name = Player name [] 0 0
+
+shuffle :: [a] -> StdGen -> [a]
+shuffle [] _ = []
+shuffle xs gen = fst <$> sortOn snd (zip xs (randoms gen :: [Int]))
+
+deck :: IO [Card]
+deck = do shuffle
+            ([Wizard Red, Wizard Blue, Wizard Yellow, Wizard Green, Narr Red,
+              Narr Blue, Narr Yellow, Narr Green]
+               ++((`Card` Red) <$> [1 .. 13])
+               ++((`Card` Blue) <$> [1 .. 13])
+               ++((`Card` Yellow) <$> [1 .. 13]) 
+               ++ ((`Card` Green) <$> [1 .. 13]))
+            <$> newStdGen
 
 deleteCardFrom :: Player -> Card -> Player
 deleteCardFrom p@Player {..} delC = p {handCards = filter (== delC) handCards}
@@ -84,39 +102,21 @@ trickRoundEnded ::GameState -> Bool
 trickRoundEnded GameState{..} = length mid == length player
 
 whosePlayersTrick :: [Card] -> [Player] -> Maybe Color -> Player
-whosePlayersTrick mid p trump = snd $ foldl1 (\(c1,p1) (c2,p2) -> if compareCard c1 c2 firstColor trump
+whosePlayersTrick mid p trump = snd $ foldl1 (\(c1,p1) (c2,p2) -> if firstCardStronger c1 c2 (ServeColor firstColor) (Trump trump)
                                                                   then (c1,p1)
                                                                   else (c2,p2))
                                              (zip (reverse mid) p)
                                                           where firstColor = serveColor mid
-  
-compareCard :: Card -> Card -> Maybe Color -> Maybe Color -> Bool
-compareCard (Narr _) (Narr _) _ _= True 
-compareCard (Narr _) _ _ _= False 
-compareCard (Wizard _) _ _ _ = True
-compareCard (Card _ _) (Narr _) _ _ = True
-compareCard (Card _ _) (Wizard _) _ _ = False
-compareCard card1@(Card n1 c1) card2@(Card n2 c2) (Just serveCol) (Just trump)
-  | c1 == trump && c2 == trump = n1 > n2
-  | c1 == trump = True
-  | c2 == trump = False
-  
-  | c1 == serveCol && c2 == serveCol = n1 > n2
-  | c1 == serveCol = True
-  | c2 == serveCol = False
-  | otherwise = error $ "compare shouldn't happen 1 " ++ show card1 
-                                                      ++ show card2 
-                                                      ++ show serveCol
-                                                      ++ show trump
-compareCard card1@(Card n1 c1) card2@(Card n2 c2) (Just serveCol) Nothing
-  | c1 == serveCol && c2 == serveCol = n1 > n2
-  | c1 == serveCol = True
-  | c2 == serveCol = False
-  | otherwise = error $ "compare shouldn't happen 2 " ++ show card1 
-                                                      ++ show card2 
-                                                      ++ show serveCol
-compareCard card1 card2 serveCol trump = error $ "compare shouldn't happen 3 " ++ show card1 
-                                                                               ++ show card2 
+
+firstCardStronger :: Card -> Card -> ServeColor -> Trump -> Bool
+firstCardStronger (Wizard _) _ _ _ = True
+firstCardStronger _ (Wizard _) _ _ = False
+firstCardStronger _ (Narr _) _ _= True
+firstCardStronger (Narr _) _ _ _= False
+firstCardStronger (Card n1 c1) (Card n2 c2) (ServeColor (Just serveCol)) (Trump trump)
+  = (Just c1 == trump, c1 == serveCol, n1) > (Just c2 == trump, c2 == serveCol, n2)
+firstCardStronger card1 card2 serveCol trump = error $ "compare shouldn't happen 3 " ++ show card1
+                                                                                     ++ show card2
                                                                                ++ show serveCol 
                                                                                ++ show trump                          
 
@@ -126,7 +126,7 @@ serveColor cs = serveColorReversed (reverse cs)
 serveColorReversed :: [Card] -> Maybe Color
 serveColorReversed [] = Nothing
 serveColorReversed (Wizard _:_) = Nothing
-serveColorReversed (Narr _:cards) = serveColor cards
+serveColorReversed (Narr _:cards) = serveColorReversed cards
 serveColorReversed (Card _ col:_) = Just col
 
 addTrick :: Player -> Player 

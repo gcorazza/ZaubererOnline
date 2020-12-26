@@ -4,8 +4,8 @@ import Wizard
 main :: IO ()
 main = do _ <- runTestTT tests
           return ()
-          
-tests = test [ 
+
+tests = test [
                "Trick Test 1" ~: whosePlayersTrick [Narr Yellow, Card 1 Yellow, Narr Red] players Nothing  ~=? (players!!1),
                "Trick Test 2" ~: whosePlayersTrick [Card 2 Yellow, Card 1 Yellow, Narr Red] players Nothing  ~=? (players!!2),
                "Trick Test 3" ~: whosePlayersTrick [Narr Yellow, Narr Red, Narr Red] players Nothing  ~=? (players!!0),
@@ -24,8 +24,11 @@ tests = test [
                "Trick Test 16" ~: whosePlayersTrick [Wizard Red, Wizard Red, Wizard Red] players Nothing  ~=? (players!!0),
                "Trick Test 17" ~: whosePlayersTrick [Wizard Red, Wizard Red, Card 1 Red] players Nothing  ~=? (players!!1),
                "Trick Test 18" ~: whosePlayersTrick [Wizard Red, Card 1 Red, Card 1 Red] players Nothing  ~=? (players!!2),
-               "Trick Test 19" ~: whosePlayersTrick [Wizard Red, Card 1 Red, Card 1 Red] players Nothing  ~=? (players!!2)
-             ]
+               "Trick Test 19" ~: whosePlayersTrick [Wizard Red, Card 1 Red, Card 1 Red] players Nothing  ~=? (players!!2),
+               "Deck Gen Test" ~: do d <- deck
+                                     return $ length d @=? 60
+               ]
+
 
 players = player iGame
 iGame = initGame ["Player1", "Player2", "Player3"]
