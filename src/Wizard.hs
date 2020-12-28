@@ -19,18 +19,21 @@ data Card
   | Narr {color :: Color}
   deriving (Eq, Show)
 
+type Said = Int
+type GotTricks = Int
+
 data Player = Player
   { name :: !String,
     handCards :: ![Card],
     said :: !(Maybe Int),
-    tricks :: Int
+    tricks :: Int,
+    points :: [(Said, GotTricks)]
   }
   deriving (Eq, Show)
 
 data Action
   = PlayCard Card
   | GuessTricks Int
-  | EndGame
 
 data Phase = Guess | Play deriving (Show, Eq)
 
@@ -81,7 +84,7 @@ initGame names = do
     player = initPlayer <$> names
 
 initPlayer :: String -> Player
-initPlayer name = Player name [] Nothing 0
+initPlayer name = Player name [] Nothing 0 []
 
 shuffle :: [a] -> StdGen -> [a]
 shuffle [] _ = []
@@ -259,8 +262,8 @@ newPlayRound gs = do
 turnPlayer :: GameState -> Player
 turnPlayer GameState {..} = player !! head playerOrder
 
-guess :: GameState -> Action -> IO GameState
-guess gs@GameState {..} (GuessTricks tg) =
+guessAction :: GameState -> Action -> IO GameState
+guessAction gs@GameState {..} (GuessTricks tg) =
   if phase == Guess
     then
       return
@@ -272,24 +275,35 @@ guess gs@GameState {..} (GuessTricks tg) =
     else return gs
   where
     tp = turnPlayer gs
-guess gs _ = return gs
+guessAction gs _ = return gs
 
+blockOfTruth :: GameState -> GameState
+blockOfTruth gs@GameState{..} = gs{player = (\p@Player{..} -> p{points = (tricks, fromJust said):points}) <$> player}
+
+gameEnded :: GameState -> Bool
+gameEnded GameState{..} = div 60 (length player) == round
+                          && all (\Player{..} -> null handCards) player
 
 playCardAction :: GameState -> Action -> IO GameState
 playCardAction gs (PlayCard c) =
   if trickRoundEnded afterPlayingCardState
-    then (if playRoundEnded afterPlayingCardState then newPlayRound afterPlayingCardState else return $ newTrickRound afterPlayingCardState)
+    then
+      ( if playRoundEnded afterPlayingCardState
+          then if gameEnded afterPlayingCardState
+               then return $ blockOfTruth afterPlayingCardState
+               else newPlayRound $ blockOfTruth afterPlayingCardState
+          else return $ newTrickRound afterPlayingCardState
+      )
     else return afterPlayingCardState
   where
     afterPlayingCardState = playCard c gs
 playCardAction gs _ = return gs
 
 applyAction :: GameState -> Action -> IO GameState
-applyAction gs pc@(PlayCard _) = playCardAction gs pc
-applyAction gs a = guess gs a
+applyAction gs a@(PlayCard _) = playCardAction gs a
+applyAction gs a@(GuessTricks _) = guessAction gs a
 
 {-
   todo:
-  - Spielende
   - points
 -}
