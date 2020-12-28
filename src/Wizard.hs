@@ -22,16 +22,17 @@ data Card
 data Player = Player
   { name :: !String,
     handCards :: ![Card],
-    said :: !Int,
+    said :: !(Maybe Int),
     tricks :: Int
   }
   deriving (Eq, Show)
 
 data Action
   = PlayCard Card
+  | GuessTricks Int
   | EndGame
 
-data Phase = Guess | Play deriving (Show)
+data Phase = Guess | Play deriving (Show, Eq)
 
 data GameState = GameState
   { player :: [Player],
@@ -44,14 +45,26 @@ data GameState = GameState
   }
 
 instance Show GameState where
-  show GameState{..} = "player: " ++ show player ++ "\n" ++
-                       "order: " ++ show (take (length player) playerOrder) ++ "\n" ++
-                       "mid: " ++ show mid ++ "\n" ++
-                       "phase: " ++ show phase ++ "\n" ++
-                       "startedRound: " ++ show startedRound ++ "\n" ++
-                       "trump: " ++ show trump ++ "\n" ++
-                       "round: " ++ show round ++ "\n"
-                       
+  show GameState {..} =
+    "player: " ++ show player ++ "\n"
+      ++ "order: "
+      ++ show (take (length player) playerOrder)
+      ++ "\n"
+      ++ "mid: "
+      ++ show mid
+      ++ "\n"
+      ++ "phase: "
+      ++ show phase
+      ++ "\n"
+      ++ "startedRound: "
+      ++ show startedRound
+      ++ "\n"
+      ++ "trump: "
+      ++ show trump
+      ++ "\n"
+      ++ "round: "
+      ++ show round
+      ++ "\n"
 
 newtype Trump = Trump (Maybe Color) deriving (Show)
 
@@ -60,13 +73,15 @@ newtype ServeColor = ServeColor (Maybe Color) deriving (Show)
 iGame = initGame ["Player1", "Player2", "Player3"]
 
 initGame :: [String] -> IO GameState
-initGame names = do deck <- newDeck
-                    let gs = GameState player (cycle [0 .. (length player - 1)]) [] Guess 0 Nothing 1
-                    return $ newCardsGS deck 1 gs
-    where player = initPlayer <$> names
+initGame names = do
+  deck <- newDeck
+  let gs = GameState player (cycle [0 .. (length player - 1)]) [] Guess 0 Nothing 1
+  return $ newCardsGS deck 1 gs
+  where
+    player = initPlayer <$> names
 
 initPlayer :: String -> Player
-initPlayer name = Player name [] 0 0
+initPlayer name = Player name [] Nothing 0
 
 shuffle :: [a] -> StdGen -> [a]
 shuffle [] _ = []
@@ -221,27 +236,60 @@ newCards cs (p : ps) r = p {handCards = hand} : newCards rest ps r
 newCardsGS :: [Card] -> Int -> GameState -> GameState
 newCardsGS cs r gs@GameState {player} = gs {player = newCards cs player r}
 
-roundEnded :: GameState -> Bool
-roundEnded GameState {..} = null $ handCards $ head player
+playRoundEnded :: GameState -> Bool
+playRoundEnded GameState {..} = null $ handCards $ head player
 
-newRound :: GameState -> IO GameState
-newRound gs = do
+guessRoundEnded :: GameState -> Bool
+guessRoundEnded GameState {..} = (not . any (isNothing . said)) player
+
+newPlayRound :: GameState -> IO GameState
+newPlayRound gs = do
   deck <- newDeck
   return
     ngs
       { player = newCards deck player (round + 1),
         round = round + 1,
         startedRound = cycleTo startedRound playerOrder !! 1,
-        playerOrder = cycleTo startedRound playerOrder
+        playerOrder = cycleTo startedRound playerOrder,
+        phase = Guess
       }
   where
     (ngs@GameState {..}, _) = endTrickRound gs
 
-applyAction :: GameState -> Action -> IO GameState
-applyAction gs (PlayCard c) =
+turnPlayer :: GameState -> Player
+turnPlayer GameState {..} = player !! head playerOrder
+
+guess :: GameState -> Action -> IO GameState
+guess gs@GameState {..} (GuessTricks tg) =
+  if phase == Guess
+    then
+      return
+        gs
+          { playerOrder = tail playerOrder,
+            player = replace player tp tp {said = Just tg},
+            phase = if guessRoundEnded gs then Play else Guess
+          }
+    else return gs
+  where
+    tp = turnPlayer gs
+guess gs _ = return gs
+
+
+playCardAction :: GameState -> Action -> IO GameState
+playCardAction gs (PlayCard c) =
   if trickRoundEnded afterPlayingCardState
-    then (if roundEnded afterPlayingCardState then newRound afterPlayingCardState else return $ newTrickRound afterPlayingCardState)
+    then (if playRoundEnded afterPlayingCardState then newPlayRound afterPlayingCardState else return $ newTrickRound afterPlayingCardState)
     else return afterPlayingCardState
   where
     afterPlayingCardState = playCard c gs
-applyAction gs _ = return gs
+playCardAction gs _ = return gs
+
+applyAction :: GameState -> Action -> IO GameState
+applyAction gs pc@(PlayCard _) = playCardAction gs pc
+applyAction gs a = guess gs a
+
+{-
+  todo:
+  - Spielende
+  - points
+-}
