@@ -4,7 +4,7 @@ cabal-version: 1.12
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 6f7a223b528c691893382412f51a37f2c40a58bb4997c9a42fe2d6f4138b453a
+-- hash: e4c1683793616148a257d6d124d9695229d1c86e69671e8341fc3a3b0d743d35
 
 name:           Wizard
 version:        0.1.0.0
@@ -34,6 +34,7 @@ library
       src
   build-depends:
       HUnit
+    , aeson
     , base >=4.7 && <5
     , random
   default-language: Haskell2010
@@ -48,6 +49,7 @@ executable Wizard-exe
   build-depends:
       HUnit
     , Wizard
+    , aeson
     , base >=4.7 && <5
     , random
   default-language: Haskell2010
@@ -63,6 +65,7 @@ test-suite Wizard-test
   build-depends:
       HUnit
     , Wizard
+    , aeson
     , base >=4.7 && <5
     , random
   default-language: Haskell2010
