@@ -5,6 +5,7 @@
 
 module Wizard where
 
+import Text.Read hiding (choice)
 import Data.Aeson
 import Data.List
 import Data.Maybe
@@ -36,8 +37,13 @@ data Action
   = PlayCard Card
   | GuessTricks Int
   | PrintState
+  | Nope
+  | ChooseTrump Color
 
-data Phase = Guess | Play deriving (Show, Eq, Generic)
+data Phase = Guess
+           | Play
+           | WaitOnTrumpChoice
+           deriving (Show, Eq, Generic)
 
 data GameState = GameState
   { player :: [Player],
@@ -45,6 +51,7 @@ data GameState = GameState
     mid :: [Card],
     phase :: Phase,
     startedRound :: Int,
+    topCard :: Maybe Card,
     trump :: Maybe Color,
     round :: Int
   }
@@ -122,7 +129,7 @@ debug = gameLoop $ return bugGs
 initGame :: [String] -> IO GameState
 initGame names = do
   deck <- newDeck
-  let gs = GameState player 0 [] Guess 0 Nothing 1
+  let gs = GameState player 0 [] Guess 0 Nothing Nothing 1
   return $ newCardsGS deck 1 gs
   where
     player = initPlayer <$> names
@@ -160,11 +167,11 @@ playerHasCard :: Player -> Card -> Bool
 playerHasCard Player {..} c = c `elem` handCards
 
 playerAllowedToPlayCard :: GameState -> Card -> Bool
-playerAllowedToPlayCard (GameState _ _ _ Guess _ _ _) _ = False
-playerAllowedToPlayCard (GameState _ _ _ Play _ _ _) (Wizard _) = True
-playerAllowedToPlayCard (GameState _ _ _ Play _ _ _) (Narr _) = True
-playerAllowedToPlayCard (GameState _ _ [] Play _ _ _) _ = True
-playerAllowedToPlayCard (GameState player tp mid Play _ _ _) (Card _ colorLaid) =
+playerAllowedToPlayCard (GameState _ _ _ Guess _ _ _ _) _ = False
+playerAllowedToPlayCard (GameState _ _ _ Play _ _ _ _) (Wizard _) = True
+playerAllowedToPlayCard (GameState _ _ _ Play _ _ _ _) (Narr _) = True
+playerAllowedToPlayCard (GameState _ _ [] Play _ _ _ _) _ = True
+playerAllowedToPlayCard (GameState player tp mid Play _ _ _ _) (Card _ colorLaid) =
   isNothing firstColor
     || fromJust firstColor == colorLaid
     || not (hasColorOnHand (fromJust firstColor) hand)
@@ -283,14 +290,16 @@ cycleTo p (p1 : px) =
     then p1 : px
     else cycleTo p px
 
-newCards :: [Card] -> [Player] -> Int -> [Player]
-newCards _ [] _ = []
-newCards cs (p : ps) r = p {handCards = hand} : newCards rest ps r
+newCards :: [Card] -> [Player] -> Int -> ([Player], Maybe Card)
+newCards rest [] _ = ([], if null rest then Nothing else Just $ head rest)
+newCards cs (p : ps) r = (p {handCards = hand} : nextHand, lastRest)
   where
     (hand, rest) = splitAt r cs
+    (nextHand ,lastRest) = newCards rest ps r
 
 newCardsGS :: [Card] -> Int -> GameState -> GameState
-newCardsGS cs r gs@GameState {player} = gs {player = newCards cs player r}
+newCardsGS cs r gs@GameState {player} = gs {player = uPlayer, topCard = nextCard}
+  where (uPlayer, nextCard) = newCards cs player r
 
 playRoundEnded :: GameState -> Bool
 playRoundEnded GameState {..} = all (null . handCards) player
@@ -304,16 +313,29 @@ nothingSaid ps = (\p -> p{said = Nothing}) <$> ps
 newPlayRound :: GameState -> IO GameState
 newPlayRound gs = do
   deck <- newDeck
+  let (uPlayer, nextCard) = newCards deck player (round + 1)
   return
     ngs
-      { player = nothingSaid $ newCards deck player (round + 1),
+      { player = nothingSaid uPlayer,
         round = round + 1,
         startedRound = nextPlayer player startedRound,
         turnPlayer = startedRound,
-        phase = Guess
+        phase = case nextCard of
+                  (Just (Wizard _)) -> WaitOnTrumpChoice
+                  _                 -> Guess,
+        topCard = nextCard,
+        trump = case nextCard of
+                  (Just (Wizard _)) -> Nothing
+                  (Just (Narr _))   -> Nothing
+                  (Just (Card _ c)) -> Just c
+                  Nothing           -> Nothing
       }
   where
     (ngs@GameState {..}, _) = endTrickRound gs
+
+chooseTrumpAction :: GameState -> Action -> IO GameState
+chooseTrumpAction gs (ChooseTrump c) = return gs{trump = Just c}
+chooseTrumpAction gs _ = return gs
 
 guessAction :: GameState -> Action -> IO GameState
 guessAction gs@GameState {..} (GuessTricks tg) =
@@ -370,20 +392,42 @@ playCardAction gs (PlayCard c)
 playCardAction gs _ = return gs
 
 getAction :: GameState -> IO Action
-getAction gs@GameState {phase, player, turnPlayer, round}
-  | phase == Guess =
-    do
-      print $ name tp ++ ":  Guess 0 - " ++ show round
-      GuessTricks . read <$> getLine
-  | phase == Play =
-    do
-      print $ name tp
-      print $ show <$> handCardsTurnPlayer
-      print $ (\n -> " " ++ show n ++ " ") <$> [1 .. length handCardsTurnPlayer]
-      choice <- getLine
-      if choice == "s"
-        then return PrintState
-        else return $ PlayCard (handCardsTurnPlayer !! (read choice - 1))
+getAction GameState {phase, player, turnPlayer, round} =
+  case phase of
+    Guess -> do
+              print $ name tp ++ ":  Guess 0 - " ++ show round
+              choice <- getLine
+              case readMaybe choice of
+                Nothing -> return Nope
+                (Just n)       -> if n >= 0 && n <= round
+                                  then return  $ GuessTricks n
+                                  else return Nope
+    Play -> do
+              print $ name tp
+              print $ show <$> handCardsTurnPlayer
+              print $ (\n -> " " ++ show n ++ " ") <$> [1 .. length handCardsTurnPlayer]
+              choice <- getLine
+              if choice == "s"
+              then return PrintState 
+              else case readMaybe choice of
+                    Nothing -> return Nope
+                    Just n -> if n >= 1 && n <= length handCardsTurnPlayer
+                              then return $ PlayCard (handCardsTurnPlayer !! (n - 1))
+                              else return Nope
+    WaitOnTrumpChoice -> do
+              print $ name tp
+              print $ show <$> handCardsTurnPlayer
+              print "[Y] [B] [R] [G]"
+              choice <- getLine
+              case choice of
+                "Y" -> return $ ChooseTrump Yellow
+                "B" -> return $ ChooseTrump Blue
+                "R" -> return $ ChooseTrump Red
+                "G" -> return $ ChooseTrump Green
+                _   -> return Nope
+
+
+
   where
     handCardsTurnPlayer = handCards tp
     tp = player!!turnPlayer
@@ -399,11 +443,14 @@ gameLoop gs = do
       gameLoop $ applyAction g a
 
 applyAction :: GameState -> Action -> IO GameState
+applyAction gs Nope = return gs
 applyAction gs a@(PlayCard _) = playCardAction gs a
 applyAction gs a@(GuessTricks _) = guessAction gs a
+applyAction gs a@(ChooseTrump _) = chooseTrumpAction gs a
 applyAction gs PrintState = do
   print $ encode gs
   return gs
 
 {- todo:
+  wizard ask trump color
 -}
